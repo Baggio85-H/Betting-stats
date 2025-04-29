@@ -374,14 +374,38 @@ st.title("⚽ Football Match Predictor App")
 # User inputs
 # === 1. League → Home Team → Away Team Dynamic Dropdowns ===
 
-# Build League -> Teams mapping
-leagues_to_teams = combined_df.groupby('Div')['HomeTeam'].unique().apply(list).to_dict()
+# === Dropdowns for League, Home Team, Away Team ===
 
-# League selection
-selected_league_name = st.selectbox("Select League", list(LEAGUE_CODE_MAP.keys()))
+# Mapping readable league names to internal league codes
+LEAGUE_CODE_MAP = {
+    'Premier League': 'E0',
+    'Championship': 'E1',
+    'League One': 'E2',
+    'League Two': 'E3',
+    'La Liga': 'SP1',
+    'Segunda Division': 'SP2',
+    'Serie A': 'I1',
+    'Serie B': 'I2',
+    'Bundesliga 1': 'D1',
+    'Bundesliga 2': 'D2',
+    'Ligue 1': 'F1',
+    'Ligue 2': 'F2',
+    'Primeira Liga': 'P1',
+    'Eredivisie': 'N1',
+    'Scottish Premier': 'SC0',
+    'Belgian First Division': 'B1',
+    'Greek Super League': 'G1',
+    'Turkish Super Lig': 'T1',
+    'Swiss Super League': 'EC',
+}
 
-# Behind the scenes, get the code like "E0", "SP1", etc.
+# Select league
+selected_league_name = st.selectbox('Select League:', list(LEAGUE_CODE_MAP.keys()))
 selected_league_code = LEAGUE_CODE_MAP[selected_league_name]
+
+# Filter team list based on league
+filtered_df = combined_df[combined_df['Div'] == selected_league_code]
+all_teams = sorted(pd.unique(filtered_df[['HomeTeam', 'AwayTeam']].values.ravel()))
 
 # Home Team selection (filtered)
 home_team = st.selectbox('Select Home Team:', leagues_to_teams[selected_league])
