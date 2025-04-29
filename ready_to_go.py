@@ -18,8 +18,8 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # === Load and Combine Excel Files ===
 excel_files = [
-    '/Users/robertpuskas/Desktop/Machine learning/all-euro-data-2023-2024.xlsx',
-    '/Users/robertpuskas/Desktop/Machine learning/all-euro-data-2024-2025.xlsx'
+    'all-euro-data-2023-2024.xlsx',
+    'all-euro-data-2024-2025.xlsx'
 ]
 
 combined_df = pd.DataFrame()
