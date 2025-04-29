@@ -350,21 +350,21 @@ def predict_match_auto_full(
         home_xg_model, away_xg_model, xg_training_columns
     )
 # === Predictions ===
-
-predict_match_auto_full(
-    home_team='Casa Pia',
-    away_team='Estoril',
-    dt=pd.Timestamp('2025-04-29 21:30'),
-    home_odds=2.45,
-    draw_odds=2.95,
-    away_odds=3.25,
-    trained_model=rf_model,
-    training_columns=training_columns,
-    home_xg_model=home_xg_model,
-    away_xg_model=away_xg_model,
-    xg_training_columns=xg_training_columns,
-    df=combined_df
-)
+#
+# predict_match_auto_full(
+#    home_team='Casa Pia',
+#    away_team='Estoril',
+#    dt=pd.Timestamp('2025-04-29 21:30'),
+#    home_odds=2.45,
+#    draw_odds=2.95,
+#    away_odds=3.25,
+#    trained_model=rf_model,
+#    training_columns=training_columns,
+#    home_xg_model=home_xg_model,
+#    away_xg_model=away_xg_model,
+#    xg_training_columns=xg_training_columns,
+#    df=combined_df
+#)
 
 # === Streamlit App ===
 import streamlit as st
