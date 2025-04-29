@@ -13,6 +13,34 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import accuracy_score, classification_report
 
+# === League Code to Friendly Name Mapping ===
+LEAGUE_NAME_MAP = {
+    "E0": "Premier League",
+    "E1": "Championship",
+    "E2": "League One",
+    "E3": "League Two",
+    "SP1": "La Liga",
+    "SP2": "Segunda División",
+    "D1": "Bundesliga",
+    "D2": "2. Bundesliga",
+    "I1": "Serie A",
+    "I2": "Serie B",
+    "F1": "Ligue 1",
+    "F2": "Ligue 2",
+    "N1": "Eredivisie",
+    "P1": "Primeira Liga",
+    "B1": "Jupiler Pro League",
+    "SC0": "Scottish Premiership",
+    "SC1": "Scottish Championship",
+    "SC2": "Scottish League One",
+    "SC3": "Scottish League Two",
+    "G1": "Super League Greece",
+    "T1": "Turkish Super Lig",
+    "EC": "Champions League",
+}
+
+# Reverse mapping: Friendly name ➔ Code
+LEAGUE_CODE_MAP = {v: k for k, v in LEAGUE_NAME_MAP.items()}
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -350,7 +378,10 @@ st.title("⚽ Football Match Predictor App")
 leagues_to_teams = combined_df.groupby('Div')['HomeTeam'].unique().apply(list).to_dict()
 
 # League selection
-selected_league = st.selectbox('Select League:', list(leagues_to_teams.keys()))
+selected_league_name = st.selectbox("Select League", list(LEAGUE_CODE_MAP.keys()))
+
+# Behind the scenes, get the code like "E0", "SP1", etc.
+selected_league_code = LEAGUE_CODE_MAP[selected_league_name]
 
 # Home Team selection (filtered)
 home_team = st.selectbox('Select Home Team:', leagues_to_teams[selected_league])
