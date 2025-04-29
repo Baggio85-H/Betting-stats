@@ -344,8 +344,21 @@ import streamlit as st
 st.title("⚽ Football Match Predictor App")
 
 # User inputs
-home_team = st.text_input("Enter Home Team:")
-away_team = st.text_input("Enter Away Team:")
+# === 1. League → Home Team → Away Team Dynamic Dropdowns ===
+
+# Build League -> Teams mapping
+leagues_to_teams = combined_df.groupby('Div')['HomeTeam'].unique().apply(list).to_dict()
+
+# League selection
+selected_league = st.selectbox('Select League:', list(leagues_to_teams.keys()))
+
+# Home Team selection (filtered)
+home_team = st.selectbox('Select Home Team:', leagues_to_teams[selected_league])
+
+# Away Team selection (filtered and excluding the Home Team)
+away_team_options = [team for team in leagues_to_teams[selected_league] if team != home_team]
+away_team = st.selectbox('Select Away Team:', away_team_options)
+
 match_date = st.date_input("Select Match Date:")
 match_time = st.time_input("Select Match Time:")
 
