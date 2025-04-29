@@ -408,11 +408,11 @@ filtered_df = combined_df[combined_df['Div'] == selected_league_code]
 all_teams = sorted(pd.unique(filtered_df[['HomeTeam', 'AwayTeam']].values.ravel()))
 
 # Home Team selection (filtered)
-home_team = st.selectbox('Select Home Team:', leagues_to_teams[selected_league])
+home_team = st.selectbox('Select Home Team:', all_teams, key='home_team')
 
 # Away Team selection (filtered and excluding the Home Team)
-away_team_options = [team for team in leagues_to_teams[selected_league] if team != home_team]
-away_team = st.selectbox('Select Away Team:', away_team_options)
+away_team_options = [team for team in all_teams if team != home_team]
+away_team = st.selectbox('Select Away Team:', away_team_options, key='away_team')
 
 match_date = st.date_input("Select Match Date:")
 match_time = st.time_input("Select Match Time:")
