@@ -54,60 +54,32 @@ import streamlit as st
 
 @st.cache_data
 def load_combined_data():
-    import os
-    import pandas as pd
-
-    pickle_path = 'cached_combined_df.pkl'
-
-    # ⚡ Load from cache if available
-    if os.path.exists(pickle_path):
-        return pd.read_pickle(pickle_path)
-
-    # 🔁 Otherwise load from Excel
     excel_files = [
         'all-euro-data-2023-2024.xlsx',
         'all-euro-data-2024-2025.xlsx'
     ]
 
-    all_dfs = []
+    combined_df = pd.DataFrame()
 
     for file in excel_files:
         excel = pd.ExcelFile(file)
         for sheet_name in excel.sheet_names:
-            temp_df = excel.parse(sheet_name).copy()
+            temp_df = excel.parse(sheet_name)
+            temp_df['League'] = sheet_name
+            temp_df['Season'] = file.split('/')[-1].replace('.xlsx', '')
 
-            # Add metadata columns in one go
-            temp_df = temp_df.assign(
-                League=sheet_name,
-                Season=file.split('/')[-1].replace('.xlsx', '')
-            )
-
-            # Convert numeric columns
             for col in temp_df.columns:
                 try:
                     temp_df[col] = pd.to_numeric(temp_df[col])
                 except (ValueError, TypeError):
                     continue
 
-            # Add BTTS column
-            temp_df = temp_df.assign(
-                BTTS=((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
-            )
+            # Add BTTS column: 1 if both teams scored
+            temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
 
-            all_dfs.append(temp_df)
+            combined_df = pd.concat([combined_df, temp_df])
 
-    # Combine all sheets in one go
-    combined_df = pd.concat(all_dfs, ignore_index=True)
-
-    # 💾 Save to pickle for faster reload next time
-    combined_df.to_pickle(pickle_path)
-
-    return combined_df
-
-
-# ✅ Use it
-combined_df = load_combined_data()
-
+    return combined_df.reset_index(drop=True)
 
 # === Basic Cleaning ===
 combined_df.dropna(axis=1, how='all', inplace=True)
@@ -517,13 +489,7 @@ import gspread
 import streamlit as st
 from datetime import datetime
 
-
-
-def log_prediction_to_sheet(sheet_name, row_data):
-    import streamlit as st
-    import gspread
-    from datetime import datetime
-
+def ensure_sheet_headers(sheet_name, creds_path="bet25-458323-5032ba07639b.json"):
     headers = [
         "Timestamp", "League", "Home Team", "Away Team", "DateTime",
         "Odds (H)", "Odds (D)", "Odds (A)",
@@ -531,17 +497,220 @@ def log_prediction_to_sheet(sheet_name, row_data):
         "xG Home", "xG Away", "BTTS Prob"
     ]
 
-    # Authenticate with Streamlit secrets
-    credentials = st.secrets["gcp_service_account"]
-    gc = gspread.service_account_from_dict(dict(credentials))
+    gc = gspread.service_account(filename=creds_path)
     sh = gc.open(sheet_name)
     worksheet = sh.sheet1
 
-    # Add headers if sheet is empty
+    existing_headers = worksheet.row_values(1)
+    if existing_headers != headers:
+        worksheet.delete_rows(1)
+        worksheet.insert_row(headers, index=1)
+
+
+from datetime import datetime
+
+def log_prediction_to_sheet(sheet_name, row_data, creds_path="bet25-458323-5032ba07639b.json"):
+    gc = gspread.service_account(filename=creds_path)
+    sh = gc.open(sheet_name)
+    worksheet = sh.sheet1
+
+    # Define column headers (exact order must match row_data)
+    headers = [
+        "Timestamp", "League", "Home Team", "Away Team", "DateTime",
+        "Odds (H)", "Odds (D)", "Odds (A)",
+        "Prediction", "Conf. H", "Conf. D", "Conf. A",
+        "xG Home", "xG Away", "BTTS Prob"
+    ]
+
+    # Add headers only if sheet is empty
     if len(worksheet.get_all_values()) == 0:
         worksheet.append_row(headers)
 
-    # Add prediction row with timestamp
+    # Timestamp for the first column
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row_with_time = [timestamp] + [str(val).replace(",", ".") for val in row_data]
+
     worksheet.append_row(row_with_time)
+
+
+
+st.title("⚽ Football Match Predictor App")
+
+# User inputs
+# === 1. League → Home Team → Away Team Dynamic Dropdowns ===
+
+# === Dropdowns for League, Home Team, Away Team ===
+
+# Mapping readable league names to internal league codes
+LEAGUE_CODE_MAP = {
+    'Premier League': 'E0',
+    'Championship': 'E1',
+    'League One': 'E2',
+    'League Two': 'E3',
+    'La Liga': 'SP1',
+    'La Liga 2': 'SP2',
+    'Serie A': 'I1',
+    'Serie B': 'I2',
+    'Bundesliga 1': 'D1',
+    'Bundesliga 2': 'D2',
+    'Ligue 1': 'F1',
+    'Ligue 2': 'F2',
+    'Liga Portugal': 'P1',
+    'Eredivisie': 'N1',
+    'Scottish Premier': 'SC0',
+    'Belgian First Division': 'B1',
+    'Greek Super League': 'G1',
+    'Turkish Super Lig': 'T1',
+    'National League': 'EC',
+}
+
+# Select league
+# Add "All Leagues" option to the top of the dropdown
+LEAGUE_NAMES_WITH_ALL = ["All Leagues"] + list(LEAGUE_CODE_MAP.keys())
+selected_league_name = st.selectbox('Select League:', LEAGUE_NAMES_WITH_ALL)
+
+# Returns None if "All Leagues" is selected
+selected_league_code = LEAGUE_CODE_MAP.get(selected_league_name, None)
+
+# Display accuracy for selected league
+if selected_league_code in results:
+    league_accuracy = results[selected_league_code]
+    st.markdown(f"🧠 **Model Accuracy for {selected_league_name}:** {league_accuracy:.2%}")
+    
+else:
+    st.markdown("🧠 Accuracy data not available for this league.")
+    
+
+
+
+# Filter team list based on league
+if selected_league_code:
+    # Filter by selected league
+    filtered_df = combined_df[combined_df['Div'] == selected_league_code]
+else:
+    # All leagues
+    filtered_df = combined_df
+
+all_teams = sorted(pd.unique(filtered_df[['HomeTeam', 'AwayTeam']].values.ravel()))
+
+# Home Team selection (filtered)
+home_team = st.selectbox('Select Home Team:', all_teams, key='home_team')
+
+# Away Team selection (filtered and excluding the Home Team)
+away_team_options = [team for team in all_teams if team != home_team]
+away_team = st.selectbox('Select Away Team:', away_team_options, key='away_team')
+
+match_date = st.date_input("Select Match Date:")
+match_time = st.time_input("Select Match Time:")
+
+home_odds = st.number_input("Enter Home Win Odds", value=2.50)
+draw_odds = st.number_input("Enter Draw Odds", value=3.00)
+away_odds = st.number_input("Enter Away Win Odds", value=3.00)
+
+
+import gspread
+
+def log_prediction_to_sheet(sheet_name, row_data, creds_path="bet25-458323-5032ba07639b.json"):
+    gc = gspread.service_account(filename=creds_path)
+    sh = gc.open("Prediction Logs")
+    worksheet = sh.sheet1  # You can use a named sheet if needed: sh.worksheet("Sheet1")
+
+    worksheet.append_row(row_data)
+
+
+
+# Predict button
+if st.button("Predict Match"):
+    if home_team and away_team:
+        dt = pd.Timestamp(f"{match_date} {match_time}")
+        # Call your prediction function
+        pred, confidence, home_xg, away_xg, btts_prob = predict_match_auto_full(
+            home_team=home_team,
+            away_team=away_team,
+            dt=dt,
+            home_odds=home_odds,
+            draw_odds=draw_odds,
+            away_odds=away_odds,
+            trained_model=rf_model,
+            training_columns=training_columns,
+            home_xg_model=home_xg_model,
+            away_xg_model=away_xg_model,
+            xg_training_columns=xg_training_columns,
+            df=combined_df,
+            btts_model=btts_model,
+            btts_training_columns=btts_training_columns
+        )
+
+        ###st.subheader("📢 Prediction Result")###
+        ###st.write(f"**Predicted Result:** {pred}")###
+
+        st.subheader("🔎 Confidence Levels")
+        st.write(f"Home Win: {confidence['H']:.2%}")
+        st.write(f"Draw: {confidence['D']:.2%}")
+        st.write(f"Away Win: {confidence['A']:.2%}")
+
+        st.subheader("⚽ Expected Goals (xG)")
+        st.write(f"{home_team}: {home_xg:.2f} xG")
+        st.write(f"{away_team}: {away_xg:.2f} xG")
+        
+        st.subheader("🎯 BTTS (Both Teams To Score)")
+        
+        # Textual label based on probability
+        if btts_prob > 0.65:
+            confidence_label = "High"
+        elif btts_prob > 0.45:
+            confidence_label = "Medium"
+        else:
+            confidence_label = "Low"
+
+        st.write(f"Chance: **{btts_prob * 100:.1f}%** ({confidence_label} confidence)")
+        st.progress(min(int(btts_prob * 100), 100), text="BTTS Probability")
+
+
+        # Prepare row for logging (aligned with headers)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        row_data = [
+            timestamp,
+            selected_league_name,
+            home_team,
+            away_team,
+            str(dt),
+            home_odds,
+            draw_odds,
+            away_odds,
+            pred,
+            confidence['H'],  # instead of f"{confidence['H']:.2%}"
+            confidence['D'],
+            confidence['A'],
+            home_xg,
+            away_xg,
+            btts_prob
+        ]
+
+
+        try:
+            ensure_sheet_headers("Prediction Logs")
+            log_prediction_to_sheet("Prediction Logs", row_data)
+            st.success("✅ Prediction logged to Google Sheets.")
+        except Exception as e:
+            st.warning(f"⚠️ Logging failed: {e}")
+        
+    else:
+        st.error("Please enter both Home and Away teams.")
+
+    def ensure_sheet_headers(sheet_name, creds_path="bet25-458323-5032ba07639b.json"):
+        import gspread
+        gc = gspread.service_account(filename=creds_path)
+        sh = gc.open(sheet_name)
+        worksheet = sh.sheet1
+
+        expected_headers = [
+            "Timestamp", "League", "Home Team", "Away Team",
+            "Home Odds", "Draw Odds", "Away Odds",
+            "Conf. Home", "Conf. Draw", "Conf. Away",
+            "xG Home", "xG Away", "BTTS Probability"
+        ]
+
+        current_headers = worksheet.row_values(1)
+        if current_headers != expected_headers:
+            worksheet.insert_row(expected_headers, index=1)   
