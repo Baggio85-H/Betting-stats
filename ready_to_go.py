@@ -54,14 +54,22 @@ import streamlit as st
 
 @st.cache_data
 def load_combined_data():
+    import os
     import pandas as pd
 
+    pickle_path = 'cached_combined_df.pkl'
+
+    # ⚡ Load from cache if available
+    if os.path.exists(pickle_path):
+        return pd.read_pickle(pickle_path)
+
+    # 🔁 Otherwise load from Excel
     excel_files = [
         'all-euro-data-2023-2024.xlsx',
         'all-euro-data-2024-2025.xlsx'
     ]
 
-    all_dfs = []  # We will store each processed sheet here
+    all_dfs = []
 
     for file in excel_files:
         excel = pd.ExcelFile(file)
@@ -81,7 +89,7 @@ def load_combined_data():
                 except (ValueError, TypeError):
                     continue
 
-            # Add BTTS using assign to prevent fragmentation
+            # Add BTTS column
             temp_df = temp_df.assign(
                 BTTS=((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
             )
@@ -90,9 +98,16 @@ def load_combined_data():
 
     # Combine all sheets in one go
     combined_df = pd.concat(all_dfs, ignore_index=True)
-    return combined_df  # 🔁 this was missing!
 
+    # 💾 Save to pickle for faster reload next time
+    combined_df.to_pickle(pickle_path)
+
+    return combined_df
+
+
+# ✅ Use it
 combined_df = load_combined_data()
+
 
 # === Basic Cleaning ===
 combined_df.dropna(axis=1, how='all', inplace=True)
