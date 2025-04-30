@@ -54,13 +54,14 @@ import streamlit as st
 
 @st.cache_data
 def load_combined_data():
+    import pandas as pd
+
     excel_files = [
         'all-euro-data-2023-2024.xlsx',
         'all-euro-data-2024-2025.xlsx'
     ]
 
-    # Instead of growing combined_df in a loop, collect temp_dfs first
-    all_dfs = []
+    all_dfs = []  # We will store each processed sheet here
 
     for file in excel_files:
         excel = pd.ExcelFile(file)
@@ -69,21 +70,22 @@ def load_combined_data():
             temp_df['League'] = sheet_name
             temp_df['Season'] = file.split('/')[-1].replace('.xlsx', '')
 
+            # Convert numeric columns
             for col in temp_df.columns:
                 try:
                     temp_df[col] = pd.to_numeric(temp_df[col])
                 except (ValueError, TypeError):
                     continue
 
-            # Add BTTS column: 1 if both teams scored
+            # Add BTTS column before concatenation
             temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
 
-            # Add the fully processed temp_df to list
-            all_dfs.append(temp_df)
+            all_dfs.append(temp_df)  # Append to list instead of growing DataFrame
 
-    # Concatenate once — much faster and avoids fragmentation
+    # Combine all sheets in one go – no fragmentation
     combined_df = pd.concat(all_dfs, ignore_index=True)
     return combined_df
+
 
     
 combined_df = load_combined_data()
