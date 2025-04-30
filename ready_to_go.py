@@ -71,11 +71,7 @@ def load_combined_data():
             temp_df['Season'] = file.split('/')[-1].replace('.xlsx', '')
 
             # Convert numeric columns
-            for col in temp_df.columns:
-                try:
-                    temp_df[col] = pd.to_numeric(temp_df[col])
-                except (ValueError, TypeError):
-                    continue
+            temp_df = temp_df.apply(pd.to_numeric, errors='ignore')
 
             # Add BTTS column before concatenation
             temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
