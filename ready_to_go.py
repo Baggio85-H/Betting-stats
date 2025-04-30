@@ -67,8 +67,12 @@ def load_combined_data():
         excel = pd.ExcelFile(file)
         for sheet_name in excel.sheet_names:
             temp_df = excel.parse(sheet_name).copy()
-            temp_df['League'] = sheet_name
-            temp_df['Season'] = file.split('/')[-1].replace('.xlsx', '')
+
+            # Add metadata columns in one go
+            temp_df = temp_df.assign(
+                League=sheet_name,
+                Season=file.split('/')[-1].replace('.xlsx', '')
+            )
 
             # Convert numeric columns
             for col in temp_df.columns:
@@ -77,14 +81,16 @@ def load_combined_data():
                 except (ValueError, TypeError):
                     continue
 
-            # Add BTTS column before concatenation
-            temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
+            # Add BTTS using assign to prevent fragmentation
+            temp_df = temp_df.assign(
+                BTTS=((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
+            )
 
-            all_dfs.append(temp_df)  # Append to list instead of growing DataFrame
+            all_dfs.append(temp_df)
 
-    # Combine all sheets in one go – no fragmentation
+    # Combine all sheets in one go
     combined_df = pd.concat(all_dfs, ignore_index=True)
-    return combined_df
+    return combined_df  # 🔁 this was missing!
 
 combined_df = load_combined_data()
 
