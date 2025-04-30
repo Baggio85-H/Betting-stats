@@ -2,6 +2,7 @@
 
 
 # === Imports ===
+import streamlit as st
 import pandas as pd
 import numpy as np
 import warnings
@@ -49,27 +50,39 @@ LEAGUE_CODE_MAP = {v: k for k, v in LEAGUE_NAME_MAP.items()}
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # === Load and Combine Excel Files === from https://www.football-data.co.uk/downloadm.php
-excel_files = [
-    'all-euro-data-2023-2024.xlsx',
-    'all-euro-data-2024-2025.xlsx'
-]
+import streamlit as st
 
-combined_df = pd.DataFrame()
-for file in excel_files:
-    excel = pd.ExcelFile(file)
-    for sheet_name in excel.sheet_names:
-        temp_df = excel.parse(sheet_name)
-        temp_df['League'] = sheet_name
-        temp_df['Season'] = file.split('/')[-1].replace('.xlsx', '')
-        for col in temp_df.columns:
-            try:
-                temp_df[col] = pd.to_numeric(temp_df[col])
-            except (ValueError, TypeError):
-                continue
-        combined_df = pd.concat([combined_df, temp_df])
+@st.cache_data
+def load_combined_data():
+    excel_files = [
+        'all-euro-data-2023-2024.xlsx',
+        'all-euro-data-2024-2025.xlsx'
+    ]
 
-        # Add BTTS column: 1 if both teams scored, else 0
-        temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
+    combined_df = pd.DataFrame()
+
+    for file in excel_files:
+        excel = pd.ExcelFile(file)
+        for sheet_name in excel.sheet_names:
+            temp_df = excel.parse(sheet_name)
+            temp_df['League'] = sheet_name
+            temp_df['Season'] = file.split('/')[-1].replace('.xlsx', '')
+
+            for col in temp_df.columns:
+                try:
+                    temp_df[col] = pd.to_numeric(temp_df[col])
+                except (ValueError, TypeError):
+                    continue
+
+            # Add BTTS column: 1 if both teams scored
+            temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
+
+            combined_df = pd.concat([combined_df, temp_df])
+
+    return combined_df.reset_index(drop=True)
+    
+combined_df = load_combined_data()
+
 
 # === Basic Cleaning ===
 combined_df.dropna(axis=1, how='all', inplace=True)
