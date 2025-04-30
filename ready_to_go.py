@@ -66,7 +66,7 @@ def load_combined_data():
     for file in excel_files:
         excel = pd.ExcelFile(file)
         for sheet_name in excel.sheet_names:
-            temp_df = excel.parse(sheet_name)
+            temp_df = excel.parse(sheet_name).copy()
             temp_df['League'] = sheet_name
             temp_df['Season'] = file.split('/')[-1].replace('.xlsx', '')
 
@@ -86,10 +86,7 @@ def load_combined_data():
     combined_df = pd.concat(all_dfs, ignore_index=True)
     return combined_df
 
-
-    
 combined_df = load_combined_data()
-
 
 # === Basic Cleaning ===
 combined_df.dropna(axis=1, how='all', inplace=True)
