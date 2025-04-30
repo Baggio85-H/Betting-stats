@@ -64,6 +64,9 @@ for file in excel_files:
                 continue
         combined_df = pd.concat([combined_df, temp_df])
 
+        # Add BTTS column: 1 if both teams scored, else 0
+        temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
+
 # === Basic Cleaning ===
 combined_df.dropna(axis=1, how='all', inplace=True)
 combined_df.dropna(axis=0, how='all', inplace=True)
@@ -135,6 +138,8 @@ for idx, row in combined_df.iterrows():
     rolling_stats["away_GF"][away].append(ftag)
     rolling_stats["away_GA"][away].append(fthg)
 
+# === Create BTTS (Both Teams To Score) column ===
+combined_df['BTTS'] = ((combined_df['FTHG'] > 0) & (combined_df['FTAG'] > 0)).astype(int)
 
 
 # === Train Block ===
@@ -146,13 +151,15 @@ features = [
     'ImpH', 'ImpD', 'ImpA', 'Avg>2.5', 'Avg<2.5',
     'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
     'home_GF_rolling5', 'home_GA_rolling5',
-    'away_GF_rolling5', 'away_GA_rolling5'
+    'away_GF_rolling5', 'away_GA_rolling5',
+    'HR', 'AR'  # 🔴 Red cards
 ]
 
 combined = combined_df[features + ['FTR']].dropna()
 X = combined.drop(columns='FTR')
 y = combined['FTR']
 X_encoded = pd.get_dummies(X)
+
 
 # Match outcome model
 rf_model = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
@@ -165,6 +172,30 @@ xg_training_columns = list(X_encoded.columns)
 # xG models
 home_xg_model = Ridge().fit(X_encoded, combined_df.loc[X_encoded.index, 'FTHG'])
 away_xg_model = Ridge().fit(X_encoded, combined_df.loc[X_encoded.index, 'FTAG'])
+
+# === Train BTTS Model ===
+btts_df = combined_df.dropna(subset=[
+    'FTHG', 'FTAG', 'BTTS',  # outcome columns
+    'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
+    'home_GF_rolling5', 'home_GA_rolling5',
+    'away_GF_rolling5', 'away_GA_rolling5'
+])
+
+X_btts = pd.get_dummies(btts_df[[
+    'HomeTeam', 'AwayTeam', 'Div', 'Month', 'Weekday', 'Hour',
+    'ImpH', 'ImpD', 'ImpA',
+    'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
+    'home_GF_rolling5', 'home_GA_rolling5',
+    'away_GF_rolling5', 'away_GA_rolling5'
+]])
+
+y_btts = btts_df['BTTS']
+
+btts_model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+btts_model.fit(X_btts, y_btts)
+
+# Save structure
+btts_training_columns = X_btts.columns
 
 # === Per-League Accuracy Evaluation ===
 from sklearn.metrics import classification_report
@@ -231,13 +262,18 @@ def get_recent_form(team_name, is_home, df, current_date):
             points.append({'A': 3, 'D': 1, 'H': 0}.get(row['FTR'], 0))
     return np.mean(points) if points else np.nan
 
-def predict_match_with_xg(home_team, away_team, div, month, weekday, hour,
-                           imp_h, imp_d, imp_a, over25, under25,
-                           home_form, away_form,
-                           home_GF_roll5, home_GA_roll5,
-                           away_GF_roll5, away_GA_roll5,
-                           trained_model, training_columns,
-                           home_xg_model, away_xg_model, xg_training_columns):
+# Here's the updated version of the prediction functions including BTTS prediction.
+
+# Place these in your Functions block, replacing your existing versions of `predict_match_with_xg()` and `predict_match_auto_full()`
+
+def predict_match_with_xg_and_btts(home_team, away_team, div, month, weekday, hour,
+                                   imp_h, imp_d, imp_a, over25, under25,
+                                   home_form, away_form,
+                                   home_GF_roll5, home_GA_roll5,
+                                   away_GF_roll5, away_GA_roll5,
+                                   trained_model, training_columns,
+                                   home_xg_model, away_xg_model, xg_training_columns,
+                                   btts_model, btts_training_columns):
 
     input_df = pd.DataFrame([{
         'HomeTeam': home_team,
@@ -259,69 +295,108 @@ def predict_match_with_xg(home_team, away_team, div, month, weekday, hour,
         'away_GA_rolling5': away_GA_roll5
     }])
 
+    # Encode inputs
     input_encoded = pd.get_dummies(input_df)
-    missing_cols = [col for col in training_columns if col not in input_encoded.columns]
-    input_encoded = pd.concat([input_encoded, pd.DataFrame(0, index=input_encoded.index, columns=missing_cols)], axis=1)
+    for col in training_columns:
+        if col not in input_encoded:
+            input_encoded[col] = 0
     input_encoded = input_encoded[training_columns]
 
-    xg_input_encoded = pd.get_dummies(input_df)
-    missing_xg_cols = [col for col in xg_training_columns if col not in xg_input_encoded.columns]
-    xg_input_encoded = pd.concat([xg_input_encoded, pd.DataFrame(0, index=xg_input_encoded.index, columns=missing_xg_cols)], axis=1)
-    xg_input_encoded = xg_input_encoded[xg_training_columns]
-
+    # Predict result
     pred = trained_model.predict(input_encoded)[0]
     prob = trained_model.predict_proba(input_encoded)[0]
     confidence = dict(zip(trained_model.classes_, prob))
 
+    # Predict xG
+    xg_input_encoded = pd.get_dummies(input_df).reindex(columns=xg_training_columns, fill_value=0)
     home_xg = home_xg_model.predict(xg_input_encoded)[0]
     away_xg = away_xg_model.predict(xg_input_encoded)[0]
 
+    # Predict BTTS
+    btts_input_encoded = pd.get_dummies(input_df).reindex(columns=btts_training_columns, fill_value=0)
+    btts_proba = btts_model.predict_proba(btts_input_encoded)[0][1]
+
+    # Output
     print(f"\n📢 Prediction: {pred}")
     print("Confidence Scores:")
     for k in ['H', 'D', 'A']:
         print(f"  {k}: {confidence.get(k, 0.0):.2%}")
     print(f"\n⚽ Expected Goals:\n  {home_team}: {home_xg:.2f} xG\n  {away_team}: {away_xg:.2f} xG")
+    print(f"\n🤝 Both Teams to Score (BTTS): {btts_proba:.2%}")
 
-    return pred, confidence, home_xg, away_xg
+    return pred, confidence, home_xg, away_xg, btts_proba
 
-def predict_match_auto_full(
-    home_team, away_team, dt,
-    home_odds, draw_odds, away_odds,
-    trained_model, training_columns,
-    home_xg_model, away_xg_model, xg_training_columns,
-    df
-):
+
+def predict_match_auto_full(home_team, away_team, dt,
+                             home_odds, draw_odds, away_odds,
+                             trained_model, training_columns,
+                             home_xg_model, away_xg_model, xg_training_columns,
+                             btts_model, btts_training_columns,
+                             df):
     recent_match = df[
         ((df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)) |
         ((df['HomeTeam'] == away_team) & (df['AwayTeam'] == home_team))
     ].sort_values('Datetime', ascending=False).head(1)
     div = recent_match['Div'].values[0] if not recent_match.empty else 'P1'
 
-    row = df[
-        (df['HomeTeam'] == home_team) & 
-        (df['AwayTeam'] == away_team)
-    ].sort_values('Datetime', ascending=False).head(1)
+    row = df[(df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)].sort_values('Datetime', ascending=False).head(1)
     over25 = row['Avg>2.5'].values[0] if not row.empty else df['Avg>2.5'].mean()
     under25 = row['Avg<2.5'].values[0] if not row.empty else df['Avg<2.5'].mean()
 
-    home_form = get_recent_form(home_team, is_home=True, df=df, current_date=dt)
-    away_form = get_recent_form(away_team, is_home=False, df=df, current_date=dt)
+    def get_form(team, is_home):
+        recent = df[
+            ((df['HomeTeam'] == team) if is_home else (df['AwayTeam'] == team)) &
+            (df['Datetime'] < dt)
+        ].sort_values('Datetime', ascending=False).head(5)
+        points = []
+        for _, r in recent.iterrows():
+            outcome = r['FTR']
+            points.append({'H': 3, 'D': 1, 'A': 0}.get(outcome, 0) if is_home else {'A': 3, 'D': 1, 'H': 0}.get(outcome, 0))
+        return np.mean(points) if points else np.nan
 
     def get_gf_ga(team, is_home):
+        recent = df[
+            ((df['HomeTeam'] == team) if is_home else (df['AwayTeam'] == team)) &
+            (df['Datetime'] < dt)
+        ].sort_values('Datetime', ascending=False).head(5)
+        gf = recent['FTHG'] if is_home else recent['FTAG']
+        ga = recent['FTAG'] if is_home else recent['FTHG']
+        return gf.mean(), ga.mean()
+
+    home_form = get_form(home_team, is_home=True)
+    away_form = get_form(away_team, is_home=False)
+    home_GF_roll5, home_GA_roll5 = get_gf_ga(home_team, is_home=True)
+    away_GF_roll5, away_GA_roll5 = get_gf_ga(away_team, is_home=False)
+
+    sum_odds = 1 / home_odds + 1 / draw_odds + 1 / away_odds
+    imp_h = (1 / home_odds) / sum_odds
+    imp_d = (1 / draw_odds) / sum_odds
+    imp_a = (1 / away_odds) / sum_odds
+
+    return predict_match_with_xg_and_btts(
+        home_team, away_team, div, dt.month, dt.day_name(), dt.hour,
+        imp_h, imp_d, imp_a, over25, under25,
+        home_form, away_form,
+        home_GF_roll5, home_GA_roll5,
+        away_GF_roll5, away_GA_roll5,
+        trained_model, training_columns,
+        home_xg_model, away_xg_model, xg_training_columns,
+        btts_model, btts_training_columns
+    )
+
+
+    # --- Rolling red cards ---
+    def get_red_cards(team, is_home):
         team_matches = df[
             ((df['HomeTeam'] == team) if is_home else (df['AwayTeam'] == team)) &
             (df['Datetime'] < dt)
         ].sort_values('Datetime', ascending=False).head(5)
-        if is_home:
-            gf = team_matches['FTHG']
-            ga = team_matches['FTAG']
-        else:
-            gf = team_matches['FTAG']
-            ga = team_matches['FTHG']
-        return np.mean(gf), np.mean(ga)
 
-    home_GF_roll5, home_GA_roll5 = get_gf_ga(home_team, is_home=True)
-    away_GF_roll5, away_GA_roll5 = get_gf_ga(away_team, is_home=False)
+        red_col = 'HR' if is_home else 'AR'
+        return np.mean(team_matches[red_col]) if red_col in team_matches else 0
+
+    home_RC = get_red_cards(home_team, is_home=True)
+    away_RC = get_red_cards(away_team, is_home=False)
 
     month = dt.month
     weekday = dt.day_name()
@@ -346,28 +421,62 @@ def predict_match_auto_full(
         home_form, away_form,
         home_GF_roll5, home_GA_roll5,
         away_GF_roll5, away_GA_roll5,
+        home_RC, away_RC,  # ✅ Add these two
         trained_model, training_columns,
         home_xg_model, away_xg_model, xg_training_columns
     )
-# === Predictions ===
-#
-# predict_match_auto_full(
-#    home_team='Casa Pia',
-#    away_team='Estoril',
-#    dt=pd.Timestamp('2025-04-29 21:30'),
-#    home_odds=2.45,
-#    draw_odds=2.95,
-#    away_odds=3.25,
-#    trained_model=rf_model,
-#    training_columns=training_columns,
-#    home_xg_model=home_xg_model,
-#    away_xg_model=away_xg_model,
-#    xg_training_columns=xg_training_columns,
-#    df=combined_df
-#)
 
-# === Streamlit App ===
+
+
+# === Streamlit App and Google Spreadsheet===
+import gspread
 import streamlit as st
+from datetime import datetime
+
+def ensure_sheet_headers(sheet_name, creds_path="bet25-458323-5032ba07639b.json"):
+    headers = [
+        "Timestamp", "League", "Home Team", "Away Team", "DateTime",
+        "Odds (H)", "Odds (D)", "Odds (A)",
+        "Prediction", "Conf. H", "Conf. D", "Conf. A",
+        "xG Home", "xG Away", "BTTS Prob"
+    ]
+
+    gc = gspread.service_account(filename=creds_path)
+    sh = gc.open(sheet_name)
+    worksheet = sh.sheet1
+
+    existing_headers = worksheet.row_values(1)
+    if existing_headers != headers:
+        worksheet.delete_rows(1)
+        worksheet.insert_row(headers, index=1)
+
+
+from datetime import datetime
+
+def log_prediction_to_sheet(sheet_name, row_data, creds_path="bet25-458323-5032ba07639b.json"):
+    gc = gspread.service_account(filename=creds_path)
+    sh = gc.open(sheet_name)
+    worksheet = sh.sheet1
+
+    # Define column headers (exact order must match row_data)
+    headers = [
+        "Timestamp", "League", "Home Team", "Away Team", "DateTime",
+        "Odds (H)", "Odds (D)", "Odds (A)",
+        "Prediction", "Conf. H", "Conf. D", "Conf. A",
+        "xG Home", "xG Away", "BTTS Prob"
+    ]
+
+    # Add headers only if sheet is empty
+    if len(worksheet.get_all_values()) == 0:
+        worksheet.append_row(headers)
+
+    # Timestamp for the first column
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row_with_time = [timestamp] + [str(val).replace(",", ".") for val in row_data]
+
+    worksheet.append_row(row_with_time)
+
+
 
 st.title("⚽ Football Match Predictor App")
 
@@ -403,6 +512,17 @@ LEAGUE_CODE_MAP = {
 selected_league_name = st.selectbox('Select League:', list(LEAGUE_CODE_MAP.keys()))
 selected_league_code = LEAGUE_CODE_MAP[selected_league_name]
 
+# Display accuracy for selected league
+if selected_league_code in results:
+    league_accuracy = results[selected_league_code]
+    st.markdown(f"🧠 **Model Accuracy for {selected_league_name}:** {league_accuracy:.2%}")
+    
+else:
+    st.markdown("🧠 Accuracy data not available for this league.")
+    
+
+
+
 # Filter team list based on league
 filtered_df = combined_df[combined_df['Div'] == selected_league_code]
 all_teams = sorted(pd.unique(filtered_df[['HomeTeam', 'AwayTeam']].values.ravel()))
@@ -421,12 +541,24 @@ home_odds = st.number_input("Enter Home Win Odds", value=2.50)
 draw_odds = st.number_input("Enter Draw Odds", value=3.00)
 away_odds = st.number_input("Enter Away Win Odds", value=3.00)
 
+
+import gspread
+
+def log_prediction_to_sheet(sheet_name, row_data, creds_path="bet25-458323-5032ba07639b.json"):
+    gc = gspread.service_account(filename=creds_path)
+    sh = gc.open("Prediction Logs")
+    worksheet = sh.sheet1  # You can use a named sheet if needed: sh.worksheet("Sheet1")
+
+    worksheet.append_row(row_data)
+
+
+
 # Predict button
 if st.button("Predict Match"):
     if home_team and away_team:
         dt = pd.Timestamp(f"{match_date} {match_time}")
         # Call your prediction function
-        pred, confidence, home_xg, away_xg = predict_match_auto_full(
+        pred, confidence, home_xg, away_xg, btts_prob = predict_match_auto_full(
             home_team=home_team,
             away_team=away_team,
             dt=dt,
@@ -438,11 +570,13 @@ if st.button("Predict Match"):
             home_xg_model=home_xg_model,
             away_xg_model=away_xg_model,
             xg_training_columns=xg_training_columns,
-            df=combined_df
+            df=combined_df,
+            btts_model=btts_model,
+            btts_training_columns=btts_training_columns
         )
 
-        st.subheader("📢 Prediction Result")
-        st.write(f"**Predicted Result:** {pred}")
+        ###st.subheader("📢 Prediction Result")###
+        ###st.write(f"**Predicted Result:** {pred}")###
 
         st.subheader("🔎 Confidence Levels")
         st.write(f"Home Win: {confidence['H']:.2%}")
@@ -452,5 +586,65 @@ if st.button("Predict Match"):
         st.subheader("⚽ Expected Goals (xG)")
         st.write(f"{home_team}: {home_xg:.2f} xG")
         st.write(f"{away_team}: {away_xg:.2f} xG")
+        
+        st.subheader("🎯 BTTS (Both Teams To Score)")
+        
+        # Textual label based on probability
+        if btts_prob > 0.65:
+            confidence_label = "High"
+        elif btts_prob > 0.45:
+            confidence_label = "Medium"
+        else:
+            confidence_label = "Low"
+
+        st.write(f"Chance: **{btts_prob * 100:.1f}%** ({confidence_label} confidence)")
+        st.progress(min(int(btts_prob * 100), 100), text="BTTS Probability")
+
+
+        # Prepare row for logging (aligned with headers)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        row_data = [
+            timestamp,
+            selected_league_name,
+            home_team,
+            away_team,
+            str(dt),
+            home_odds,
+            draw_odds,
+            away_odds,
+            pred,
+            confidence['H'],  # instead of f"{confidence['H']:.2%}"
+            confidence['D'],
+            confidence['A'],
+            home_xg,
+            away_xg,
+            btts_prob
+        ]
+
+
+        try:
+            ensure_sheet_headers("Prediction Logs")
+            log_prediction_to_sheet("Prediction Logs", row_data)
+            st.success("✅ Prediction logged to Google Sheets.")
+        except Exception as e:
+            st.warning(f"⚠️ Logging failed: {e}")
+        
     else:
         st.error("Please enter both Home and Away teams.")
+
+    def ensure_sheet_headers(sheet_name, creds_path="bet25-458323-5032ba07639b.json"):
+        import gspread
+        gc = gspread.service_account(filename=creds_path)
+        sh = gc.open(sheet_name)
+        worksheet = sh.sheet1
+
+        expected_headers = [
+            "Timestamp", "League", "Home Team", "Away Team",
+            "Home Odds", "Draw Odds", "Away Odds",
+            "Conf. Home", "Conf. Draw", "Conf. Away",
+            "xG Home", "xG Away", "BTTS Probability"
+        ]
+
+        current_headers = worksheet.row_values(1)
+        if current_headers != expected_headers:
+            worksheet.insert_row(expected_headers, index=1)   
