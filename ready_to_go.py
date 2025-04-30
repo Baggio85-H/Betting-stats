@@ -59,7 +59,8 @@ def load_combined_data():
         'all-euro-data-2024-2025.xlsx'
     ]
 
-    combined_df = pd.DataFrame()
+    # Instead of growing combined_df in a loop, collect temp_dfs first
+    all_dfs = []
 
     for file in excel_files:
         excel = pd.ExcelFile(file)
@@ -77,9 +78,16 @@ def load_combined_data():
             # Add BTTS column: 1 if both teams scored
             temp_df['BTTS'] = ((temp_df['FTHG'] > 0) & (temp_df['FTAG'] > 0)).astype(int)
 
-            combined_df = pd.concat([combined_df, temp_df])
+            # Add the fully processed temp_df to list
+            all_dfs.append(temp_df)
 
-    return combined_df.reset_index(drop=True)
+    # Concatenate once — much faster and avoids fragmentation
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+    return combined_df
+
+    
+combined_df = load_combined_data()
+
 
 # === Basic Cleaning ===
 combined_df.dropna(axis=1, how='all', inplace=True)
