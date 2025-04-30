@@ -12,6 +12,10 @@ from sklearn.linear_model import Ridge
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import accuracy_score, classification_report
+import os  # for checking if .pkl files exist
+skip_training = os.path.exists("rf_model.pkl")
+
+
 
 # === League Code to Friendly Name Mapping ===
 LEAGUE_NAME_MAP = {
@@ -20,7 +24,7 @@ LEAGUE_NAME_MAP = {
     "E2": "League One",
     "E3": "League Two",
     "SP1": "La Liga",
-    "SP2": "Segunda División",
+    "SP2": "La Liga 2",
     "D1": "Bundesliga",
     "D2": "2. Bundesliga",
     "I1": "Serie A",
@@ -28,7 +32,7 @@ LEAGUE_NAME_MAP = {
     "F1": "Ligue 1",
     "F2": "Ligue 2",
     "N1": "Eredivisie",
-    "P1": "Primeira Liga",
+    "P1": "Liga Portugal",
     "B1": "Jupiler Pro League",
     "SC0": "Scottish Premiership",
     "SC1": "Scottish Championship",
@@ -36,7 +40,7 @@ LEAGUE_NAME_MAP = {
     "SC3": "Scottish League Two",
     "G1": "Super League Greece",
     "T1": "Turkish Super Lig",
-    "EC": "Champions League",
+    "EC": "National League",
 }
 
 # Reverse mapping: Friendly name ➔ Code
@@ -44,7 +48,7 @@ LEAGUE_CODE_MAP = {v: k for k, v in LEAGUE_NAME_MAP.items()}
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-# === Load and Combine Excel Files ===
+# === Load and Combine Excel Files === from https://www.football-data.co.uk/downloadm.php
 excel_files = [
     'all-euro-data-2023-2024.xlsx',
     'all-euro-data-2024-2025.xlsx'
@@ -141,113 +145,155 @@ for idx, row in combined_df.iterrows():
 # === Create BTTS (Both Teams To Score) column ===
 combined_df['BTTS'] = ((combined_df['FTHG'] > 0) & (combined_df['FTAG'] > 0)).astype(int)
 
+import os
+import joblib
+
+# === Attempt to load saved models and training structures ===
+if (
+    os.path.exists("rf_model.pkl") and
+    os.path.exists("home_xg_model.pkl") and
+    os.path.exists("away_xg_model.pkl") and
+    os.path.exists("btts_model.pkl") and
+    os.path.exists("training_columns.pkl") and
+    os.path.exists("xg_training_columns.pkl") and
+    os.path.exists("btts_training_columns.pkl") and
+    os.path.exists("results.pkl")  # ✅ Add this check
+
+):
+    rf_model = joblib.load("rf_model.pkl")
+    home_xg_model = joblib.load("home_xg_model.pkl")
+    away_xg_model = joblib.load("away_xg_model.pkl")
+    btts_model = joblib.load("btts_model.pkl")
+    training_columns = joblib.load("training_columns.pkl")
+    xg_training_columns = joblib.load("xg_training_columns.pkl")
+    btts_training_columns = joblib.load("btts_training_columns.pkl")
+    results = joblib.load("results.pkl")  # ✅ Load results here
+    skip_training = True
+    print("✅ Models loaded from disk.")
+
+else:
+    skip_training = False
 
 # === Train Block ===
 
+if not skip_training:
 
-# === Train Random Forest and Ridge Models ===
-features = [
-    'HomeTeam', 'AwayTeam', 'Div', 'Month', 'Weekday', 'Hour',
-    'ImpH', 'ImpD', 'ImpA', 'Avg>2.5', 'Avg<2.5',
-    'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
-    'home_GF_rolling5', 'home_GA_rolling5',
-    'away_GF_rolling5', 'away_GA_rolling5',
-    'HR', 'AR'  # 🔴 Red cards
-]
+    # === Train Random Forest and Ridge Models ===
+    features = [
+        'HomeTeam', 'AwayTeam', 'Div', 'Month', 'Weekday', 'Hour',
+        'ImpH', 'ImpD', 'ImpA', 'Avg>2.5', 'Avg<2.5',
+        'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
+        'home_GF_rolling5', 'home_GA_rolling5',
+        'away_GF_rolling5', 'away_GA_rolling5',
+        'HR', 'AR'  # 🔴 Red cards
+    ]
 
-combined = combined_df[features + ['FTR']].dropna()
-X = combined.drop(columns='FTR')
-y = combined['FTR']
-X_encoded = pd.get_dummies(X)
-
-
-# Match outcome model
-rf_model = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
-rf_model.fit(X_encoded, y)
-
-# Save column structures
-training_columns = X_encoded.columns
-xg_training_columns = list(X_encoded.columns)
-
-# xG models
-home_xg_model = Ridge().fit(X_encoded, combined_df.loc[X_encoded.index, 'FTHG'])
-away_xg_model = Ridge().fit(X_encoded, combined_df.loc[X_encoded.index, 'FTAG'])
-
-# === Train BTTS Model ===
-btts_df = combined_df.dropna(subset=[
-    'FTHG', 'FTAG', 'BTTS',  # outcome columns
-    'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
-    'home_GF_rolling5', 'home_GA_rolling5',
-    'away_GF_rolling5', 'away_GA_rolling5'
-])
-
-X_btts = pd.get_dummies(btts_df[[
-    'HomeTeam', 'AwayTeam', 'Div', 'Month', 'Weekday', 'Hour',
-    'ImpH', 'ImpD', 'ImpA',
-    'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
-    'home_GF_rolling5', 'home_GA_rolling5',
-    'away_GF_rolling5', 'away_GA_rolling5'
-]])
-
-y_btts = btts_df['BTTS']
-
-btts_model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
-btts_model.fit(X_btts, y_btts)
-
-# Save structure
-btts_training_columns = X_btts.columns
-
-# === Per-League Accuracy Evaluation ===
-from sklearn.metrics import classification_report
-
-target_divs = combined_df['Div'].dropna().unique()
-results = {}
-
-print("📊 Model Performance by League\n")
-
-for div in target_divs:
-    df_div = combined_df[combined_df['Div'] == div].copy()
-    df_div = df_div.dropna(subset=features + ['FTR'])
-
-    if len(df_div) < 30:
-        continue
-
-    X_div = df_div[features]
-    y_div = df_div['FTR']
-    X_encoded_div = pd.get_dummies(X_div)
-
-    # Efficiently align columns
-    X_encoded_div = X_encoded_div.reindex(columns=training_columns, fill_value=0)
-
-    X_train, X_test, y_train, y_test = train_test_split(
-    X_encoded_div, y_div, test_size=0.2, stratify=y_div, random_state=42
-    )
-
-    model = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
+    combined = combined_df[features + ['FTR']].dropna()
+    X = combined.drop(columns='FTR')
+    y = combined['FTR']
+    X_encoded = pd.get_dummies(X)
 
 
-    print(f"🔍 Training on Division: {div}")
-    print(f"✅ Accuracy: {acc:.4f}")
-    print(classification_report(y_test, y_pred))
+    # Match outcome model
+    rf_model = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
+    rf_model.fit(X_encoded, y)
 
-    results[div] = acc
+    # Save column structures
+    training_columns = X_encoded.columns
+    xg_training_columns = list(X_encoded.columns)
 
-# === Visualize Per-Division Accuracy ===
-sorted_results = dict(sorted(results.items(), key=lambda item: item[1]))  # Sort by accuracy
+    # xG models
+    home_xg_model = Ridge().fit(X_encoded, combined_df.loc[X_encoded.index, 'FTHG'])
+    away_xg_model = Ridge().fit(X_encoded, combined_df.loc[X_encoded.index, 'FTAG'])
 
-plt.figure(figsize=(10, 6))
-plt.bar(sorted_results.keys(), sorted_results.values(), color='skyblue')
-plt.title('Random Forest Accuracy by League (Ascending)')
-plt.xlabel('League')
-plt.ylabel('Accuracy')
-plt.ylim(0.3, 0.7)
-plt.axhline(0.44, color='red', linestyle='--', label='Baseline (All Leagues)')
-plt.legend()
-plt.tight_layout()
-plt.show()
+    # === Train BTTS Model ===
+    btts_df = combined_df.dropna(subset=[
+        'FTHG', 'FTAG', 'BTTS',  # outcome columns
+        'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
+        'home_GF_rolling5', 'home_GA_rolling5',
+        'away_GF_rolling5', 'away_GA_rolling5'
+    ])
+
+    X_btts = pd.get_dummies(btts_df[[
+        'HomeTeam', 'AwayTeam', 'Div', 'Month', 'Weekday', 'Hour',
+        'ImpH', 'ImpD', 'ImpA',
+        'HomeTeam_HomeForm', 'AwayTeam_AwayForm',
+        'home_GF_rolling5', 'home_GA_rolling5',
+        'away_GF_rolling5', 'away_GA_rolling5'
+    ]])
+
+    y_btts = btts_df['BTTS']
+
+    btts_model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+    btts_model.fit(X_btts, y_btts)
+
+    # Save structure
+    btts_training_columns = X_btts.columns
+
+    # === Per-League Accuracy Evaluation ===
+    from sklearn.metrics import classification_report
+
+    target_divs = combined_df['Div'].dropna().unique()
+    results = {}
+
+    print("📊 Model Performance by League\n")
+
+    for div in target_divs:
+        df_div = combined_df[combined_df['Div'] == div].copy()
+        df_div = df_div.dropna(subset=features + ['FTR'])
+
+        if len(df_div) < 30:
+            continue
+
+        X_div = df_div[features]
+        y_div = df_div['FTR']
+        X_encoded_div = pd.get_dummies(X_div)
+
+        # Efficiently align columns
+        X_encoded_div = X_encoded_div.reindex(columns=training_columns, fill_value=0)
+
+        X_train, X_test, y_train, y_test = train_test_split(
+        X_encoded_div, y_div, test_size=0.2, stratify=y_div, random_state=42
+        )
+
+        model = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+
+
+        print(f"🔍 Training on Division: {div}")
+        print(f"✅ Accuracy: {acc:.4f}")
+        print(classification_report(y_test, y_pred))
+
+        results[div] = acc
+
+    # === Visualize Per-Division Accuracy ===
+    sorted_results = dict(sorted(results.items(), key=lambda item: item[1]))  # Sort by accuracy
+
+    plt.figure(figsize=(10, 6))
+    plt.bar(sorted_results.keys(), sorted_results.values(), color='skyblue')
+    plt.title('Random Forest Accuracy by League (Ascending)')
+    plt.xlabel('League')
+    plt.ylabel('Accuracy')
+    plt.ylim(0.3, 0.7)
+    plt.axhline(0.44, color='red', linestyle='--', label='Baseline (All Leagues)')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+    
+    joblib.dump(results, "results.pkl")  # Save per-league accuracy dictionary
+
+    import joblib 
+
+    joblib.dump(rf_model, "rf_model.pkl")     # Save Random Forest model
+    joblib.dump(home_xg_model, "home_xg_model.pkl")     # Save xG models
+    joblib.dump(away_xg_model, "away_xg_model.pkl")
+    joblib.dump(btts_model, "btts_model.pkl")    # Save BTTS model
+    joblib.dump(training_columns, "training_columns.pkl")     # Save training column structures
+    joblib.dump(xg_training_columns, "xg_training_columns.pkl")
+    joblib.dump(btts_training_columns, "btts_training_columns.pkl")
+    joblib.dump(results, "results.pkl")  # ✅ Save per-league accuracy
 
 # === Functions ===
 # === Support Functions ===
@@ -492,25 +538,29 @@ LEAGUE_CODE_MAP = {
     'League One': 'E2',
     'League Two': 'E3',
     'La Liga': 'SP1',
-    'Segunda Division': 'SP2',
+    'La Liga 2': 'SP2',
     'Serie A': 'I1',
     'Serie B': 'I2',
     'Bundesliga 1': 'D1',
     'Bundesliga 2': 'D2',
     'Ligue 1': 'F1',
     'Ligue 2': 'F2',
-    'Primeira Liga': 'P1',
+    'Liga Portugal': 'P1',
     'Eredivisie': 'N1',
     'Scottish Premier': 'SC0',
     'Belgian First Division': 'B1',
     'Greek Super League': 'G1',
     'Turkish Super Lig': 'T1',
-    'Swiss Super League': 'EC',
+    'National League': 'EC',
 }
 
 # Select league
-selected_league_name = st.selectbox('Select League:', list(LEAGUE_CODE_MAP.keys()))
-selected_league_code = LEAGUE_CODE_MAP[selected_league_name]
+# Add "All Leagues" option to the top of the dropdown
+LEAGUE_NAMES_WITH_ALL = ["All Leagues"] + list(LEAGUE_CODE_MAP.keys())
+selected_league_name = st.selectbox('Select League:', LEAGUE_NAMES_WITH_ALL)
+
+# Returns None if "All Leagues" is selected
+selected_league_code = LEAGUE_CODE_MAP.get(selected_league_name, None)
 
 # Display accuracy for selected league
 if selected_league_code in results:
@@ -524,7 +574,13 @@ else:
 
 
 # Filter team list based on league
-filtered_df = combined_df[combined_df['Div'] == selected_league_code]
+if selected_league_code:
+    # Filter by selected league
+    filtered_df = combined_df[combined_df['Div'] == selected_league_code]
+else:
+    # All leagues
+    filtered_df = combined_df
+
 all_teams = sorted(pd.unique(filtered_df[['HomeTeam', 'AwayTeam']].values.ravel()))
 
 # Home Team selection (filtered)
