@@ -517,7 +517,7 @@ import gspread
 import streamlit as st
 from datetime import datetime
 
-def ensure_sheet_headers(sheet_name, creds_path="bet25-458323-5032ba07639b.json"):
+
     headers = [
         "Timestamp", "League", "Home Team", "Away Team", "DateTime",
         "Odds (H)", "Odds (D)", "Odds (A)",
@@ -525,24 +525,31 @@ def ensure_sheet_headers(sheet_name, creds_path="bet25-458323-5032ba07639b.json"
         "xG Home", "xG Away", "BTTS Prob"
     ]
 
-    gc = gspread.service_account(filename=creds_path)
+    credentials = st.secrets["gcp_service_account"]
+    gc = gspread.service_account_from_dict(dict(credentials))
     sh = gc.open(sheet_name)
     worksheet = sh.sheet1
 
+    # Ensure headers exist
     existing_headers = worksheet.row_values(1)
     if existing_headers != headers:
-        worksheet.delete_rows(1)
+        if existing_headers:
+            worksheet.delete_rows(1)
         worksheet.insert_row(headers, index=1)
 
+    # Add a new prediction row with timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row_with_time = [timestamp] + [str(val).replace(",", ".") for val in row_data]
+    worksheet.append_row(row_with_time)
+
+
+    # Append the actual row
+    worksheet.append_row(row_data)
 
 from datetime import datetime
 
-def log_prediction_to_sheet(sheet_name, row_data, creds_path="bet25-458323-5032ba07639b.json"):
-    gc = gspread.service_account(filename=creds_path)
-    sh = gc.open(sheet_name)
-    worksheet = sh.sheet1
 
-    # Define column headers (exact order must match row_data)
+    # Define column headers
     headers = [
         "Timestamp", "League", "Home Team", "Away Team", "DateTime",
         "Odds (H)", "Odds (D)", "Odds (A)",
@@ -550,15 +557,29 @@ def log_prediction_to_sheet(sheet_name, row_data, creds_path="bet25-458323-5032b
         "xG Home", "xG Away", "BTTS Prob"
     ]
 
-    # Add headers only if sheet is empty
+    # Authenticate with Streamlit secrets
+    credentials = st.secrets["gcp_service_account"]
+    gc = gspread.service_account_from_dict(dict(credentials))
+    sh = gc.open(sheet_name)
+    worksheet = sh.sheet1
+
+    # Add headers if sheet is empty
     if len(worksheet.get_all_values()) == 0:
         worksheet.append_row(headers)
 
-    # Timestamp for the first column
+    # Add prediction row with timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row_with_time = [timestamp] + [str(val).replace(",", ".") for val in row_data]
+    worksheet.append_row(row_with_time)
+
+
+    # Add timestamp and sanitize row data
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row_with_time = [timestamp] + [str(val).replace(",", ".") for val in row_data]
 
+    # Append the row
     worksheet.append_row(row_with_time)
+
 
 
 
@@ -638,12 +659,25 @@ away_odds = st.number_input("Enter Away Win Odds", value=3.00)
 
 import gspread
 
-def log_prediction_to_sheet(sheet_name, row_data, creds_path="bet25-458323-5032ba07639b.json"):
-    gc = gspread.service_account(filename=creds_path)
-    sh = gc.open("Prediction Logs")
-    worksheet = sh.sheet1  # You can use a named sheet if needed: sh.worksheet("Sheet1")
 
-    worksheet.append_row(row_data)
+    headers = [
+        "Timestamp", "League", "Home Team", "Away Team", "DateTime",
+        "Odds (H)", "Odds (D)", "Odds (A)",
+        "Prediction", "Conf. H", "Conf. D", "Conf. A",
+        "xG Home", "xG Away", "BTTS Prob"
+    ]
+
+    credentials = st.secrets["gcp_service_account"]
+    gc = gspread.service_account_from_dict(dict(credentials))
+    sh = gc.open(sheet_name)
+    worksheet = sh.sheet1
+
+    if len(worksheet.get_all_values()) == 0:
+        worksheet.append_row(headers)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row_with_time = [timestamp] + [str(val).replace(",", ".") for val in row_data]
+    worksheet.append_row(row_with_time)
 
 
 
@@ -726,19 +760,57 @@ if st.button("Predict Match"):
     else:
         st.error("Please enter both Home and Away teams.")
 
-    def ensure_sheet_headers(sheet_name, creds_path="bet25-458323-5032ba07639b.json"):
-        import gspread
-        gc = gspread.service_account(filename=creds_path)
-        sh = gc.open(sheet_name)
-        worksheet = sh.sheet1
+    def ensure_sheet_headers(sheet_name):
+    import gspread
+    import streamlit as st
 
-        expected_headers = [
-            "Timestamp", "League", "Home Team", "Away Team",
-            "Home Odds", "Draw Odds", "Away Odds",
-            "Conf. Home", "Conf. Draw", "Conf. Away",
-            "xG Home", "xG Away", "BTTS Probability"
-        ]
+    # Authenticate using Streamlit secrets
+    credentials = st.secrets["gcp_service_account"]
+    gc = gspread.service_account_from_dict(dict(credentials))
 
-        current_headers = worksheet.row_values(1)
-        if current_headers != expected_headers:
-            worksheet.insert_row(expected_headers, index=1)   
+    # Open the Google Sheet
+    sh = gc.open(sheet_name)
+    worksheet = sh.sheet1
+
+    # Define expected headers
+    expected_headers = [
+        "Timestamp", "League", "Home Team", "Away Team",
+        "Home Odds", "Draw Odds", "Away Odds",
+        "Conf. Home", "Conf. Draw", "Conf. Away",
+        "xG Home", "xG Away", "BTTS Probability"
+    ]
+
+    current_headers = worksheet.row_values(1)
+    if current_headers != expected_headers:
+        worksheet.delete_rows(1)  # Remove old header if mismatched
+        worksheet.insert_row(expected_headers, index=1)
+
+def log_prediction_to_sheet(sheet_name, row_data):
+    import streamlit as st
+    import gspread
+    from datetime import datetime
+
+    headers = [
+        "Timestamp", "League", "Home Team", "Away Team", "DateTime",
+        "Odds (H)", "Odds (D)", "Odds (A)",
+        "Prediction", "Conf. H", "Conf. D", "Conf. A",
+        "xG Home", "xG Away", "BTTS Prob"
+    ]
+
+    # Authenticate using Streamlit secrets
+    credentials = st.secrets["gcp_service_account"]
+    gc = gspread.service_account_from_dict(dict(credentials))
+    sh = gc.open(sheet_name)
+    worksheet = sh.sheet1
+
+    # Ensure headers exist
+    existing_headers = worksheet.row_values(1)
+    if existing_headers != headers:
+        if existing_headers:
+            worksheet.delete_rows(1)
+        worksheet.insert_row(headers, index=1)
+
+    # Add a new prediction row with timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row_with_time = [timestamp] + [str(val).replace(",", ".") for val in row_data]
+    worksheet.append_row(row_with_time)
